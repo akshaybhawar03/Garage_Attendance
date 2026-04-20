@@ -1,0 +1,17 @@
+fastapi==0.115.0
+uvicorn[standard]==0.30.0
+asyncpg==0.30.0
+pgvector==0.3.6
+python-jose[cryptography]==3.3.0
+bcrypt==4.1.2
+python-dotenv==1.0.1
+deepface==0.0.93
+tf-keras==2.18.0
+mediapipe==0.10.18
+cloudinary==1.41.0
+firebase-admin==6.6.0
+numpy==1.26.4
+opencv-python-headless==4.10.0.84
+Pillow==10.4.0
+python-multipart==0.0.12
+anyio==4.4.0

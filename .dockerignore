@@ -1,0 +1,12 @@
+venv/
+__pycache__/
+app/
+scratch/
+.env
+.env.local
+.git/
+.gitignore
+.sixth/
+serviceAccount.json
+*.pyc
+README.md

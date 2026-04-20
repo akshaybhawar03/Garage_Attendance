@@ -1,0 +1,34 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# Environment files (secrets!)
+.env
+.env.local
+
+# Firebase service account (secret!)
+serviceAccount.json
+
+# Flutter app (separate repo)
+app/
+
+# Scratch / test files
+scratch/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Misc
+.sixth/
