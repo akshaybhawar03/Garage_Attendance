@@ -92,40 +92,31 @@ def compute_registration_vectors(
     photos: list[str],
 ) -> dict[str, list[float]]:
     """
-    Accept 15 base64 photos (5 front · 5 left · 5 right).
-    Average each group → return 3 × 512-dim vectors.
-    Memory-optimized: processes one photo at a time.
+    Accept 3 base64 photos (1 front · 1 left · 1 right).
+    Return 3 × 512-dim vectors.
+    Memory-optimized for low-RAM servers.
     """
     import gc
 
-    if len(photos) != 15:
-        raise ValueError(f"Expected 15 photos, got {len(photos)}")
+    # Support both 3 and 15 photos for backward compatibility
+    if len(photos) == 15:
+        # Pick first photo from each group of 5
+        selected = [photos[0], photos[5], photos[10]]
+    elif len(photos) == 3:
+        selected = photos
+    else:
+        raise ValueError(f"Expected 3 or 15 photos, got {len(photos)}")
 
-    groups = {
-        "front": photos[0:5],
-        "left": photos[5:10],
-        "right": photos[10:15],
-    }
+    angles = ["front", "left", "right"]
     vectors: dict[str, list[float]] = {}
-    for angle, batch in groups.items():
-        print(f"DEBUG: Processing group: {angle}")
-        running_sum = None
-        count = 0
-        for i, b64 in enumerate(batch):
-            print(f"DEBUG:   Extracting embedding for {angle} photo {i+1}/5...")
-            img = decode_base64_image(b64)
-            emb = np.array(get_embedding(img))
-            del img  # free image memory immediately
-            if running_sum is None:
-                running_sum = emb
-            else:
-                running_sum = running_sum + emb
-            count += 1
-            del emb
-            gc.collect()  # force garbage collection
-        print(f"DEBUG:   Group {angle} completed.")
-        vectors[angle] = (running_sum / count).tolist()
-        del running_sum
+    for i, angle in enumerate(angles):
+        print(f"DEBUG: Processing {angle} photo...")
+        img = decode_base64_image(selected[i])
+        emb = get_embedding(img)
+        del img
         gc.collect()
+        vectors[angle] = emb
+        print(f"DEBUG: {angle} done.")
     return vectors
+
 
