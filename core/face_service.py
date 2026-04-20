@@ -94,7 +94,10 @@ def compute_registration_vectors(
     """
     Accept 15 base64 photos (5 front · 5 left · 5 right).
     Average each group → return 3 × 512-dim vectors.
+    Memory-optimized: processes one photo at a time.
     """
+    import gc
+
     if len(photos) != 15:
         raise ValueError(f"Expected 15 photos, got {len(photos)}")
 
@@ -106,12 +109,23 @@ def compute_registration_vectors(
     vectors: dict[str, list[float]] = {}
     for angle, batch in groups.items():
         print(f"DEBUG: Processing group: {angle}")
-        embeddings = []
+        running_sum = None
+        count = 0
         for i, b64 in enumerate(batch):
             print(f"DEBUG:   Extracting embedding for {angle} photo {i+1}/5...")
             img = decode_base64_image(b64)
-            emb = get_embedding(img)
-            embeddings.append(emb)
+            emb = np.array(get_embedding(img))
+            del img  # free image memory immediately
+            if running_sum is None:
+                running_sum = emb
+            else:
+                running_sum = running_sum + emb
+            count += 1
+            del emb
+            gc.collect()  # force garbage collection
         print(f"DEBUG:   Group {angle} completed.")
-        vectors[angle] = np.mean(embeddings, axis=0).tolist()
+        vectors[angle] = (running_sum / count).tolist()
+        del running_sum
+        gc.collect()
     return vectors
+
