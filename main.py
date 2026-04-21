@@ -58,16 +58,3 @@ async def root():
 @app.get("/health", tags=["Health"])
 async def health():
     return {"status": "healthy"}
-
-
-if __name__ == "__main__":
-    import uvicorn
-    # Increased limits to handle large base64 photo uploads
-    uvicorn.run(
-        "main:app",
-        host="0.0.0.0",
-        port=8000,
-        limit_max_requests=None,
-        h11_max_incomplete_event_size=52428800  # 50MB
-    )
-

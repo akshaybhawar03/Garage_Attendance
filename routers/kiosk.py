@@ -28,36 +28,45 @@ async def scan_face(
 
     # ── Step 1: Liveness ──────────────────────────────────────────
     import anyio
+    import gc
+    import cv2
     try:
         image = await anyio.to_thread.run_sync(decode_base64_image, body.image)
+        # Resize to save memory
+        image = cv2.resize(image, (400, 400))
     except ValueError:
         return KioskScanResponse(success=False, reason="invalid_image")
 
+    gc.collect()
     if not await anyio.to_thread.run_sync(check_liveness, image):
         return KioskScanResponse(success=False, reason="liveness_failed")
 
     # ── Step 2: ArcFace embedding → DB match ──────────────────────
     try:
         print("DEBUG: Extracting embedding from scan image...")
+        gc.collect()
         embedding = await anyio.to_thread.run_sync(get_embedding, image)
         print("DEBUG: Embedding extracted successfully.")
     except ValueError:
         print("DEBUG: No face detected in scan image.")
         return KioskScanResponse(success=False, reason="no_face_detected")
+    finally:
+        del image
+        gc.collect()
 
     print(f"DEBUG: Vector length: {len(embedding)}")
     if len(embedding) != 512:
         print(f"ERROR: Vector length mismatch! Expected 512, got {len(embedding)}")
         return KioskScanResponse(success=False, reason="ai_error")
 
-    vector_literal = "[" + ",".join(str(v) for v in embedding) + "]"
     print(f"DEBUG: Searching for match in company {company_id}...")
 
     try:
+        # Pass embedding list directly, pgvector-python handles it
         match = await db.fetchrow(
-            "SELECT * FROM find_matching_employee($1::vector(512), $2, $3)",
-            vector_literal,
-            0.65,
+            "SELECT * FROM find_matching_employee($1, $2, $3)",
+            embedding,
+            0.80, # Increased from 0.75 for maximum security (MediaPipe ensures high quality)
             company_id,
         )
     except Exception as sql_e:

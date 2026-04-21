@@ -17,7 +17,7 @@ RIGHT_EYE = [33, 160, 158, 133, 153, 144]
 # Left eye
 LEFT_EYE = [362, 385, 387, 263, 373, 380]
 
-EAR_THRESHOLD = 0.20
+EAR_THRESHOLD = 0.15
 
 mp_face_mesh = mp.solutions.face_mesh
 
@@ -59,29 +59,34 @@ def check_liveness(image: np.ndarray) -> bool:
         static_image_mode=True,
         max_num_faces=1,
         refine_landmarks=True,
-        min_detection_confidence=0.5,
+        min_detection_confidence=0.7, # Increased from 0.5
     ) as mesh:
         result = mesh.process(rgb)
         if not result.multi_face_landmarks:
+            print("DEBUG: Liveness failed - No face landmarks found.")
             return False
 
         lm = result.multi_face_landmarks[0].landmark
+        print(f"DEBUG: Landmarks found: {len(lm)}")
         if len(lm) < 468:
             return False
 
         left_ear = _ear(lm, LEFT_EYE, w, h)
         right_ear = _ear(lm, RIGHT_EYE, w, h)
         avg = (left_ear + right_ear) / 2.0
+        print(f"DEBUG: Liveness EAR - Left: {left_ear:.3f}, Right: {right_ear:.3f}, Avg: {avg:.3f} (Threshold: {EAR_THRESHOLD})")
         return avg > EAR_THRESHOLD
 
 
 def get_embedding(image: np.ndarray) -> list[float]:
     """Extract a 512-dim ArcFace embedding from a BGR image."""
+    import gc
+    gc.collect()
     results = DeepFace.represent(
         img_path=image,
         model_name="ArcFace",
-        enforce_detection=False,
-        detector_backend="opencv",
+        enforce_detection=True,
+        detector_backend="mediapipe",
     )
     if not results:
         raise ValueError("No face detected in image")
@@ -112,6 +117,12 @@ def compute_registration_vectors(
     for i, angle in enumerate(angles):
         print(f"DEBUG: Processing {angle} photo...")
         img = decode_base64_image(selected[i])
+        
+        # Resize to a smaller size to save memory (ArcFace uses 112x112 anyway)
+        # 400x400 is plenty for face detection
+        img = cv2.resize(img, (400, 400))
+        
+        gc.collect() # Clear memory before heavy DeepFace call
         emb = get_embedding(img)
         del img
         gc.collect()

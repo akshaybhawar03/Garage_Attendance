@@ -32,37 +32,7 @@ class EmployeeRegisterRequest(BaseModel):
     phone: Optional[str] = None
     monthly_salary: float
     joining_date: date
-    photos: List[str]  # 15 base64 strings (legacy)
-
-
-class EmployeeCreateRequest(BaseModel):
-    """Step 1: Create employee without photos."""
-    name: str
-    phone: Optional[str] = None
-    monthly_salary: float
-    joining_date: date
-
-
-class EmployeeCreateResponse(BaseModel):
-    employee_id: int
-    name: str
-
-
-class FacePhotoUploadRequest(BaseModel):
-    """Step 2: Upload one photo at a time."""
-    photo: str  # single base64 string
-    index: int  # 0-14
-
-
-class FacePhotoUploadResponse(BaseModel):
-    success: bool
-    received: int
-
-
-class ProcessFaceVectorsResponse(BaseModel):
-    """Step 3: Process all uploaded photos into vectors."""
-    success: bool
-    vectors_saved: int
+    photos: List[str]  # 15 base64 strings
 
 
 class EmployeeUpdateRequest(BaseModel):

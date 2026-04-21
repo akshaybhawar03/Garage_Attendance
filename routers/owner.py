@@ -12,15 +12,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from core.database import get_db
 from core.security import require_owner
-from core.face_service import compute_registration_vectors, decode_base64_image, get_embedding
+from core.face_service import compute_registration_vectors
 from utils.cloudinary_helper import upload_base64_image
 from models.schemas import (
     EmployeeRegisterRequest,
-    EmployeeCreateRequest,
-    EmployeeCreateResponse,
-    FacePhotoUploadRequest,
-    FacePhotoUploadResponse,
-    ProcessFaceVectorsResponse,
     EmployeeUpdateRequest,
     EmployeeResponse,
     AttendanceResponse,
@@ -29,9 +24,6 @@ from models.schemas import (
     SettingsResponse,
     SettingsUpdateRequest,
 )
-
-# In-memory store for photos being uploaded (employee_id -> list of base64 photos)
-_pending_photos: dict[int, dict[int, str]] = {}
 
 router = APIRouter(prefix="/api/owner", tags=["Owner"])
 
@@ -59,8 +51,6 @@ async def register_employee(
     user: dict = Depends(require_owner),
     db: asyncpg.Connection = Depends(get_db),
 ):
-    """Legacy endpoint - sends all photos at once."""
-    import traceback
     try:
         company_id = user["company_id"]
 
@@ -95,151 +85,28 @@ async def register_employee(
             # Insert face vectors
             print(f"DEBUG: Saving {len(vectors)} face vectors for employee {row['id']}...")
             for angle, vec in vectors.items():
-                vec_literal = "[" + ",".join(str(v) for v in vec) + "]"
+                # Pass the list/array directly, pgvector-python handles the conversion
                 await db.execute(
                     "INSERT INTO face_vectors (employee_id, face_vector, angle_type) "
-                    "VALUES ($1, $2::vector(512), $3)",
+                    "VALUES ($1, $2, $3)",
                     row["id"],
-                    vec_literal,
+                    vec,
                     angle,
                 )
             print("DEBUG: All face vectors saved successfully.")
 
         return dict(row)
-
+    except ValueError as ve:
+        print(f"DEBUG: Validation error during registration: {str(ve)}")
+        raise HTTPException(status_code=400, detail=str(ve))
     except Exception as e:
-        error_detail = traceback.format_exc()
-        print(f"CRITICAL REGISTRATION ERROR: {error_detail}")
-        raise HTTPException(status_code=500, detail=f"Registration failed: {str(e)}")
+        import traceback
+        error_msg = f"REGISTRATION ERROR: {str(e)}\n{traceback.format_exc()}"
+        print(error_msg)
+        with open("error.log", "a") as f:
+            f.write(f"\n--- {datetime.now()} ---\n{error_msg}\n")
+        raise HTTPException(status_code=500, detail=str(e))
 
-
-# ━━━━━━━━━━  SPLIT REGISTRATION (3-step flow)  ━━━━━━━━━━━━━━━━━
-
-@router.post("/employees/create", response_model=EmployeeCreateResponse)
-async def create_employee_step1(
-    body: EmployeeCreateRequest,
-    user: dict = Depends(require_owner),
-    db: asyncpg.Connection = Depends(get_db),
-):
-    """Step 1: Create employee record WITHOUT photos."""
-    import traceback
-    try:
-        company_id = user["company_id"]
-        row = await db.fetchrow(
-            "INSERT INTO employees "
-            "(company_id, name, phone, monthly_salary, joining_date) "
-            "VALUES ($1, $2, $3, $4, $5) "
-            "RETURNING id, name",
-            company_id,
-            body.name,
-            body.phone,
-            body.monthly_salary,
-            body.joining_date,
-        )
-        # Init pending photos storage
-        _pending_photos[row["id"]] = {}
-        print(f"DEBUG STEP1: Employee created: id={row['id']}, name={row['name']}")
-        return dict(row)
-
-    except Exception as e:
-        error_detail = traceback.format_exc()
-        print(f"CRITICAL CREATE ERROR: {error_detail}")
-        raise HTTPException(status_code=500, detail=f"Create failed: {str(e)}")
-
-
-@router.post("/employees/{emp_id}/upload-face-photo", response_model=FacePhotoUploadResponse)
-async def upload_face_photo_step2(
-    emp_id: int,
-    body: FacePhotoUploadRequest,
-    user: dict = Depends(require_owner),
-):
-    """Step 2: Upload a single face photo. Call this 15 times (index 0-14)."""
-    try:
-        if emp_id not in _pending_photos:
-            _pending_photos[emp_id] = {}
-        _pending_photos[emp_id][body.index] = body.photo
-        received = len(_pending_photos[emp_id])
-        print(f"DEBUG STEP2: Photo {body.index} received for employee {emp_id}. Total: {received}/15")
-        return FacePhotoUploadResponse(success=True, received=received)
-
-    except Exception as e:
-        print(f"CRITICAL UPLOAD ERROR: {e}")
-        raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
-
-
-@router.post("/employees/{emp_id}/process-face-vectors", response_model=ProcessFaceVectorsResponse)
-async def process_face_vectors_step3(
-    emp_id: int,
-    user: dict = Depends(require_owner),
-    db: asyncpg.Connection = Depends(get_db),
-):
-    """Step 3: Process uploaded photos → face vectors. Also uploads profile pic."""
-    import traceback
-    import anyio
-    import gc
-
-    try:
-        if emp_id not in _pending_photos or len(_pending_photos[emp_id]) == 0:
-            raise HTTPException(status_code=400, detail="No photos uploaded yet")
-
-        photos_dict = _pending_photos[emp_id]
-        # Sort by index to get ordered list
-        sorted_photos = [photos_dict[k] for k in sorted(photos_dict.keys())]
-        total = len(sorted_photos)
-        print(f"DEBUG STEP3: Processing {total} photos for employee {emp_id}")
-
-        # Upload first photo as profile pic
-        print("DEBUG STEP3: Uploading profile photo to Cloudinary...")
-        profile_url = await anyio.to_thread.run_sync(upload_base64_image, sorted_photos[0])
-        await db.execute(
-            "UPDATE employees SET profile_photo_url = $1 WHERE id = $2",
-            profile_url, emp_id,
-        )
-        print(f"DEBUG STEP3: Profile photo saved: {profile_url}")
-
-        # Process face vectors: pick 1 from each group (front/left/right)
-        if total >= 15:
-            selected = {"front": sorted_photos[0], "left": sorted_photos[5], "right": sorted_photos[10]}
-        elif total >= 3:
-            selected = {"front": sorted_photos[0], "left": sorted_photos[1], "right": sorted_photos[2]}
-        else:
-            selected = {"front": sorted_photos[0], "left": sorted_photos[0], "right": sorted_photos[0]}
-
-        vectors_saved = 0
-        async with db.transaction():
-            for angle, b64 in selected.items():
-                print(f"DEBUG STEP3: Extracting {angle} embedding...")
-                img = await anyio.to_thread.run_sync(decode_base64_image, b64)
-                emb = await anyio.to_thread.run_sync(get_embedding, img)
-                del img
-                gc.collect()
-
-                vec_literal = "[" + ",".join(str(v) for v in emb) + "]"
-                await db.execute(
-                    "INSERT INTO face_vectors (employee_id, face_vector, angle_type) "
-                    "VALUES ($1, $2::vector(512), $3)",
-                    emp_id, vec_literal, angle,
-                )
-                del emb
-                gc.collect()
-                vectors_saved += 1
-                print(f"DEBUG STEP3: {angle} vector saved!")
-
-        # Cleanup pending photos
-        del _pending_photos[emp_id]
-        gc.collect()
-        print(f"DEBUG STEP3: All done! {vectors_saved} vectors saved for employee {emp_id}")
-        return ProcessFaceVectorsResponse(success=True, vectors_saved=vectors_saved)
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        error_detail = traceback.format_exc()
-        print(f"CRITICAL PROCESS ERROR: {error_detail}")
-        # Cleanup on failure
-        if emp_id in _pending_photos:
-            del _pending_photos[emp_id]
-        raise HTTPException(status_code=500, detail=f"Processing failed: {str(e)}")
 
 
 @router.put("/employees/{emp_id}", response_model=EmployeeResponse)
